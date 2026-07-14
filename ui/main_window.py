@@ -21,11 +21,12 @@ from algorithms.rasterization.polyline import rasterize_polyline
 from algorithms.transformations.rotation import rotate_about
 from algorithms.transformations.scaling import scale_about
 from algorithms.transformations.translation import translate
-from core.constants import CANVAS_SIZE, CELL, CUBE_EDGES, CUBE_VERTICES, GRID_SIZE, MAX_COORD, MIN_COORD
+from core.constants import CUBE_EDGES, CUBE_VERTICES, GRID_SIZE, MAX_COORD, MIN_COORD
 from core.types import Point
 from models.algorithm_spec import ALGORITHMS
 from ui.canvas_grid import GridCanvas
 from ui.control_panel import ControlPanel
+from ui.three_d_view import ThreeDViewer
 
 
 class RasterApp(tk.Tk):
@@ -34,14 +35,12 @@ class RasterApp(tk.Tk):
     MIN_COORD = MIN_COORD
     MAX_COORD = MAX_COORD
     GRID_SIZE = GRID_SIZE
-    CELL = CELL
-    CANVAS_SIZE = CANVAS_SIZE
 
     def __init__(self) -> None:
         super().__init__()
         self.title("Rasterizador CG — Algoritmos do Trabalho Prático")
         self.geometry("1180x760")
-        self.minsize(1080, 700)
+        self.minsize(900, 600)
 
         self.algorithm_var = tk.StringVar(value="Bresenham")
         self.status_var = tk.StringVar()
@@ -50,11 +49,13 @@ class RasterApp(tk.Tk):
         self.result_pixels: set[Point] = set()
         self.boundary_pixels: set[Point] = set()
         self.clipping_rect: Optional[tuple[int, int, int, int]] = None
+        self._resize_job: str | None = None
 
         self._build_style()
         self._build_layout()
         self._on_algorithm_changed()
         self.draw_grid()
+        self.after_idle(self._apply_responsive_layout)
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -69,9 +70,14 @@ class RasterApp(tk.Tk):
     def _build_layout(self) -> None:
         main = ttk.Frame(self, padding=12)
         main.pack(fill=tk.BOTH, expand=True)
+        main.columnconfigure(0, weight=1)
+        main.columnconfigure(1, weight=0, minsize=ControlPanel.PANEL_WIDTH)
+        main.rowconfigure(0, weight=1)
 
         left = ttk.Frame(main)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        left.grid(row=0, column=0, sticky="nsew")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
 
         self.control_panel = ControlPanel(
             main,
@@ -81,22 +87,50 @@ class RasterApp(tk.Tk):
             self.execute_algorithm,
             self.undo_last_point,
             self.clear_all,
+            self.open_3d_view,
         )
-        self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(14, 0))
-        self.control_panel.pack_propagate(False)
+        self.control_panel.grid(row=0, column=1, sticky="nsew", padx=(14, 0))
+        self.control_panel.grid_propagate(False)
 
-        ttk.Label(left, text="Área de rasterização (-10 ≤ x,y ≤ 10)", style="Title.TLabel").pack(anchor="w")
 
-        self.canvas = GridCanvas(left)
-        self.canvas.pack(pady=(8, 4))
+        self.canvas_area = ttk.Frame(left)
+        self.canvas_area.grid(row=1, column=0, sticky="nsew", pady=(8, 4))
+        self.canvas_area.columnconfigure(0, weight=1)
+        self.canvas_area.rowconfigure(0, weight=1)
+        self.canvas_area.bind("<Configure>", self._on_resize)
+
+        self.canvas = GridCanvas(self.canvas_area)
+        self.canvas.grid(row=0, column=0)
         self.canvas.bind("<Button-1>", self._on_canvas_click)
         self.canvas.bind("<Motion>", self._on_canvas_motion)
 
-        ttk.Label(left, textvariable=self.coords_var).pack(anchor="w")
-        ttk.Label(
+        ttk.Label(left, textvariable=self.coords_var).grid(row=2, column=0, sticky="w")
+        self.legend_label = ttk.Label(
             left,
             text="Azul = resultado | Laranja = entradas | Roxo = janela de recorte | Cinza = grade",
-        ).pack(anchor="w", pady=(2, 0))
+            justify=tk.LEFT,
+        )
+        self.legend_label.grid(row=3, column=0, sticky="ew", pady=(2, 0))
+
+    def _on_resize(self, event: tk.Event) -> None:
+        if event.widget is not self.canvas_area:
+            return
+
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(100, self._apply_responsive_layout)
+
+    def _apply_responsive_layout(self) -> None:
+        self._resize_job = None
+        available_width = self.canvas_area.winfo_width()
+        available_height = self.canvas_area.winfo_height()
+        if available_width <= 1 or available_height <= 1:
+            return
+
+        self.legend_label.configure(wraplength=max(260, available_width))
+        canvas_size = min(available_width, available_height) - 2
+        if self.canvas.set_canvas_size(canvas_size):
+            self.draw_grid()
 
     def draw_grid(self) -> None:
         """Solicita ao canvas o redesenho do estado atual."""
@@ -133,14 +167,16 @@ class RasterApp(tk.Tk):
         self.result_pixels.clear()
         self._refresh_points_list()
         self.draw_grid()
+        self._update_action_buttons()
 
-        if spec.clicks is not None and len(self.input_points) == spec.clicks:
+        if spec.auto_execute and spec.clicks is not None and len(self.input_points) == spec.clicks:
             self.execute_algorithm()
 
     def _on_algorithm_changed(self) -> None:
         self.clear_all(keep_algorithm=True)
         spec = ALGORITHMS[self.algorithm_var.get()]
         self.status_var.set(spec.instruction)
+        self._update_action_buttons()
 
     def undo_last_point(self) -> None:
         if self.input_points:
@@ -148,6 +184,7 @@ class RasterApp(tk.Tk):
             self.result_pixels.clear()
             self._refresh_points_list()
             self.draw_grid()
+            self._update_action_buttons()
 
     def clear_all(self, keep_algorithm: bool = True) -> None:
         self.input_points.clear()
@@ -158,6 +195,35 @@ class RasterApp(tk.Tk):
             self._refresh_points_list()
         if hasattr(self, "canvas"):
             self.draw_grid()
+        self._update_action_buttons()
+
+    def _has_viewable_state(self) -> bool:
+        return bool(
+            self.input_points
+            or self.result_pixels
+            or self.boundary_pixels
+            or self.clipping_rect
+        )
+
+    def _update_action_buttons(self) -> None:
+        if not hasattr(self, "control_panel"):
+            return
+
+        spec = ALGORITHMS[self.algorithm_var.get()]
+        self.control_panel.update_for_algorithm(spec)
+        self.control_panel.set_view_3d_enabled(self._has_viewable_state())
+
+    def open_3d_view(self) -> None:
+        if not self._has_viewable_state():
+            return
+
+        viewer = ThreeDViewer(
+            parent=self,
+            input_points=self.input_points,
+            result_pixels=self.result_pixels,
+            clipping_rect=self.clipping_rect,
+        )
+        viewer.show()
 
     def _refresh_points_list(self) -> None:
         self.control_panel.refresh_points_list(self.input_points)
@@ -348,10 +414,13 @@ class RasterApp(tk.Tk):
 
             self.result_pixels = self._filter_bounds(result)
             self.draw_grid()
+            self._update_action_buttons()
 
         except ValueError as error:
+            self._update_action_buttons()
             messagebox.showerror("Parâmetros inválidos", str(error))
         except Exception as error:
+            self._update_action_buttons()
             messagebox.showerror(
                 "Erro inesperado",
                 f"O algoritmo não pôde ser executado:\n{error}"

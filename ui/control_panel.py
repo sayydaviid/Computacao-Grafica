@@ -5,11 +5,32 @@ from tkinter import ttk
 from typing import Callable
 
 from core.types import Point
-from models.algorithm_spec import ALGORITHMS
+from models.algorithm_spec import ALGORITHMS, AlgorithmSpec
 
 
 class ControlPanel(ttk.Frame):
     """Painel lateral com seleção de algoritmo, parâmetros e lista de pontos."""
+
+    PANEL_WIDTH = 340
+    PARAMETER_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
+        ("Janela xmin", "xmin", "-5"),
+        ("Janela ymin", "ymin", "-5"),
+        ("Janela xmax", "xmax", "5"),
+        ("Janela ymax", "ymax", "5"),
+        ("Semente X", "seed_x", "0"),
+        ("Semente Y", "seed_y", "0"),
+        ("Tx", "tx", "2"),
+        ("Ty", "ty", "2"),
+        ("Sx", "sx", "1.5"),
+        ("Sy", "sy", "1.5"),
+        ("Fixo X", "fixed_x", "0"),
+        ("Fixo Y", "fixed_y", "0"),
+        ("Ângulo", "angle", "45"),
+        ("Pivô X", "pivot_x", "0"),
+        ("Pivô Y", "pivot_y", "0"),
+        ("Fator obl.", "oblique_scale", "0.5"),
+        ("Dist. câmera", "camera_distance", "14"),
+    )
 
     def __init__(
         self,
@@ -20,25 +41,65 @@ class ControlPanel(ttk.Frame):
         on_execute: Callable[[], None],
         on_undo: Callable[[], None],
         on_clear: Callable[[], None],
+        on_view_3d: Callable[[], None],
     ) -> None:
-        super().__init__(master, width=340)
+        super().__init__(master, width=self.PANEL_WIDTH)
         self.algorithm_var = algorithm_var
         self.status_var = status_var
         self._on_algorithm_changed = on_algorithm_changed
         self._on_execute = on_execute
         self._on_undo = on_undo
         self._on_clear = on_clear
+        self._on_view_3d = on_view_3d
+
         self.entries: dict[str, ttk.Entry] = {}
+        self.parameter_widgets: dict[str, tuple[ttk.Label, ttk.Entry]] = {}
+        self.parameter_info_labels: list[ttk.Label] = []
+        self.params_frame: ttk.LabelFrame
         self.points_list: tk.Listbox
+        self.execute_button: ttk.Button
+        self.view_3d_button: ttk.Button
+        self._execute_visible = True
+        self._content_window: int | None = None
 
         self._build()
 
     def _build(self) -> None:
-        ttk.Label(self, text="Configurações", style="Title.TLabel").pack(anchor="w")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        ttk.Label(self, text="Algoritmo", style="Section.TLabel").pack(anchor="w", pady=(12, 3))
-        algo_combo = ttk.Combobox(
+        self._scroll_canvas = tk.Canvas(
             self,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self._scrollbar = ttk.Scrollbar(
+            self,
+            orient=tk.VERTICAL,
+            command=self._scroll_canvas.yview,
+        )
+        self._scroll_canvas.configure(yscrollcommand=self._scrollbar.set)
+
+        self._scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        self._scrollbar.grid(row=0, column=1, sticky="ns")
+
+        content = ttk.Frame(self._scroll_canvas)
+        self._content_window = self._scroll_canvas.create_window(
+            (0, 0),
+            window=content,
+            anchor="nw",
+        )
+        content.bind("<Configure>", lambda _: self._refresh_scroll_region())
+        self._scroll_canvas.bind("<Configure>", self._on_scroll_canvas_configure)
+
+        self._build_content(content)
+
+    def _build_content(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Configurações", style="Title.TLabel").pack(anchor="w")
+
+        ttk.Label(parent, text="Algoritmo", style="Section.TLabel").pack(anchor="w", pady=(12, 3))
+        algo_combo = ttk.Combobox(
+            parent,
             textvariable=self.algorithm_var,
             values=list(ALGORITHMS.keys()),
             state="readonly",
@@ -47,64 +108,35 @@ class ControlPanel(ttk.Frame):
         algo_combo.bind("<<ComboboxSelected>>", lambda _: self._on_algorithm_changed())
 
         instruction = ttk.Label(
-            self,
+            parent,
             textvariable=self.status_var,
             wraplength=320,
             justify=tk.LEFT,
         )
         instruction.pack(fill=tk.X, pady=(8, 10))
 
-        params_frame = ttk.LabelFrame(self, text="Parâmetros", padding=8)
-        params_frame.pack(fill=tk.X)
+        self.params_frame = ttk.LabelFrame(parent, text="Parâmetros", padding=8)
+        self.params_frame.pack(fill=tk.X)
+        self._build_parameter_widgets()
 
-        defaults = {
-            "xmin": "-5", "ymin": "-5", "xmax": "5", "ymax": "5",
-            "seed_x": "0", "seed_y": "0",
-            "tx": "2", "ty": "2",
-            "sx": "1.5", "sy": "1.5",
-            "fixed_x": "0", "fixed_y": "0",
-            "angle": "45", "pivot_x": "0", "pivot_y": "0",
-            "oblique_scale": "0.5", "camera_distance": "14",
-        }
-
-        rows = [
-            ("Janela xmin", "xmin", "Janela ymin", "ymin"),
-            ("Janela xmax", "xmax", "Janela ymax", "ymax"),
-            ("Semente X", "seed_x", "Semente Y", "seed_y"),
-            ("Tx", "tx", "Ty", "ty"),
-            ("Sx", "sx", "Sy", "sy"),
-            ("Fixo X", "fixed_x", "Fixo Y", "fixed_y"),
-            ("Ângulo", "angle", "Pivô X", "pivot_x"),
-            ("Pivô Y", "pivot_y", "Fator obl.", "oblique_scale"),
-            ("Dist. câmera", "camera_distance", "", ""),
-        ]
-
-        for row_index, (label1, key1, label2, key2) in enumerate(rows):
-            ttk.Label(params_frame, text=label1).grid(row=row_index, column=0, sticky="w", padx=(0, 4), pady=2)
-            e1 = ttk.Entry(params_frame, width=8)
-            e1.insert(0, defaults[key1])
-            e1.grid(row=row_index, column=1, sticky="ew", padx=(0, 8), pady=2)
-            self.entries[key1] = e1
-
-            if key2:
-                ttk.Label(params_frame, text=label2).grid(row=row_index, column=2, sticky="w", padx=(0, 4), pady=2)
-                e2 = ttk.Entry(params_frame, width=8)
-                e2.insert(0, defaults[key2])
-                e2.grid(row=row_index, column=3, sticky="ew", pady=2)
-                self.entries[key2] = e2
-
-        for col in range(4):
-            params_frame.columnconfigure(col, weight=1)
-
-        buttons = ttk.Frame(self)
+        buttons = ttk.Frame(parent)
         buttons.pack(fill=tk.X, pady=(12, 0))
 
-        ttk.Button(
+        self.execute_button = ttk.Button(
             buttons,
             text="Executar algoritmo",
             style="Primary.TButton",
             command=self._on_execute,
-        ).pack(fill=tk.X)
+        )
+        self.execute_button.pack(fill=tk.X)
+
+        self.view_3d_button = ttk.Button(
+            buttons,
+            text="Visualizar em 3D",
+            command=self._on_view_3d,
+            state=tk.DISABLED,
+        )
+        self.view_3d_button.pack(fill=tk.X, pady=(6, 0))
 
         ttk.Button(
             buttons,
@@ -118,11 +150,103 @@ class ControlPanel(ttk.Frame):
             command=self._on_clear,
         ).pack(fill=tk.X, pady=(6, 0))
 
-        points_frame = ttk.LabelFrame(self, text="Pontos selecionados", padding=8)
+        points_frame = ttk.LabelFrame(parent, text="Pontos selecionados", padding=8)
         points_frame.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
 
         self.points_list = tk.Listbox(points_frame, height=10)
         self.points_list.pack(fill=tk.BOTH, expand=True)
+
+    def _build_parameter_widgets(self) -> None:
+        for label_text, key, default in self.PARAMETER_DEFINITIONS:
+            label = ttk.Label(self.params_frame, text=label_text)
+            entry = ttk.Entry(self.params_frame, width=8)
+            entry.insert(0, default)
+            self.entries[key] = entry
+            self.parameter_widgets[key] = (label, entry)
+
+        self.params_frame.columnconfigure(0, weight=0)
+        self.params_frame.columnconfigure(1, weight=1)
+        self.params_frame.columnconfigure(2, weight=0)
+        self.params_frame.columnconfigure(3, weight=1)
+
+    def _update_parameter_area(self, spec: AlgorithmSpec) -> None:
+        for label, entry in self.parameter_widgets.values():
+            label.grid_forget()
+            entry.grid_forget()
+
+        for label in self.parameter_info_labels:
+            label.destroy()
+        self.parameter_info_labels.clear()
+
+        row = 0
+        for text in spec.parameter_info:
+            label = ttk.Label(
+                self.params_frame,
+                text=text,
+                wraplength=300,
+                justify=tk.LEFT,
+            )
+            label.grid(row=row, column=0, columnspan=4, sticky="w", pady=2)
+            self.parameter_info_labels.append(label)
+            row += 1
+
+        if spec.parameter_info and spec.parameter_keys:
+            row += 1
+
+        for index, key in enumerate(spec.parameter_keys):
+            label, entry = self.parameter_widgets[key]
+            row_index = row + index // 2
+            column = 0 if index % 2 == 0 else 2
+            entry_pad = (0, 8) if column == 0 else (0, 0)
+
+            label.grid(row=row_index, column=column, sticky="w", padx=(0, 4), pady=2)
+            entry.grid(row=row_index, column=column + 1, sticky="ew", padx=entry_pad, pady=2)
+
+        self.after_idle(self._refresh_scroll_region)
+
+    def _on_scroll_canvas_configure(self, event: tk.Event) -> None:
+        if self._content_window is not None:
+            self._scroll_canvas.itemconfigure(self._content_window, width=event.width)
+        self._refresh_scroll_region()
+
+    def _refresh_scroll_region(self) -> None:
+        bbox = self._scroll_canvas.bbox("all")
+        if bbox is None:
+            return
+
+        self._scroll_canvas.configure(scrollregion=bbox)
+        content_height = bbox[3] - bbox[1]
+        canvas_height = self._scroll_canvas.winfo_height()
+
+        if content_height > canvas_height + 2:
+            self._scrollbar.grid()
+        else:
+            self._scrollbar.grid_remove()
+            self._scroll_canvas.yview_moveto(0)
+
+    def update_for_algorithm(self, spec: AlgorithmSpec) -> None:
+        """Atualiza controles cuja visibilidade depende da especificação."""
+
+        self.set_execute_visible(not spec.auto_execute)
+        self._update_parameter_area(spec)
+
+    def set_execute_visible(self, visible: bool) -> None:
+        """Mostra ou remove o botão de execução manual do layout."""
+
+        if visible == self._execute_visible:
+            return
+
+        self._execute_visible = visible
+        if visible:
+            self.execute_button.pack(fill=tk.X, before=self.view_3d_button)
+        else:
+            self.execute_button.pack_forget()
+        self.after_idle(self._refresh_scroll_region)
+
+    def set_view_3d_enabled(self, enabled: bool) -> None:
+        """Habilita o visualizador 3D somente quando há estado para exibir."""
+
+        self.view_3d_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
 
     def value(self, key: str, cast: Callable = float):
         """Lê e converte um parâmetro mantendo a mensagem de erro original."""

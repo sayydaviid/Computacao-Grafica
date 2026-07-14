@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Optional
 
-from core.constants import CANVAS_SIZE, CELL, GRID_SIZE, MAX_COORD, MIN_COORD
+from core.constants import CANVAS_SIZE, GRID_SIZE, MAX_COORD, MIN_COORD
 from core.types import Point
 
 
@@ -13,35 +13,51 @@ class GridCanvas(tk.Canvas):
     MIN_COORD = MIN_COORD
     MAX_COORD = MAX_COORD
     GRID_SIZE = GRID_SIZE
-    CELL = CELL
-    CANVAS_SIZE = CANVAS_SIZE
+    MIN_CANVAS_SIZE = GRID_SIZE * 12
 
     def __init__(self, master: tk.Misc) -> None:
+        self.canvas_size = CANVAS_SIZE
+        self.cell_size = self.canvas_size / self.GRID_SIZE
         super().__init__(
             master,
-            width=self.CANVAS_SIZE,
-            height=self.CANVAS_SIZE,
+            width=self.canvas_size,
+            height=self.canvas_size,
             background="#f8fafc",
             highlightthickness=1,
             highlightbackground="#64748b",
         )
 
-    def grid_to_canvas(self, x: int, y: int) -> tuple[int, int, int, int]:
+    def set_canvas_size(self, canvas_size: int) -> bool:
+        """Atualiza o tamanho visual quadrado da grade."""
+
+        size = max(self.MIN_CANVAS_SIZE, int(canvas_size))
+        if size == self.canvas_size:
+            return False
+
+        self.canvas_size = size
+        self.cell_size = self.canvas_size / self.GRID_SIZE
+        self.configure(width=self.canvas_size, height=self.canvas_size)
+        return True
+
+    def grid_to_canvas(self, x: int, y: int) -> tuple[float, float, float, float]:
         """Converte uma célula da grade para o retângulo no canvas."""
 
         col = x - self.MIN_COORD
         row = self.MAX_COORD - y
-        x1 = col * self.CELL
-        y1 = row * self.CELL
-        return x1, y1, x1 + self.CELL, y1 + self.CELL
+        x1 = col * self.cell_size
+        y1 = row * self.cell_size
+        return x1, y1, x1 + self.cell_size, y1 + self.cell_size
 
     def canvas_to_grid(self, px: int, py: int) -> Optional[Point]:
         """Converte coordenadas de tela para coordenadas inteiras da grade."""
 
-        if not (0 <= px < self.CANVAS_SIZE and 0 <= py < self.CANVAS_SIZE):
+        if not (0 <= px < self.canvas_size and 0 <= py < self.canvas_size):
             return None
-        col = px // self.CELL
-        row = py // self.CELL
+
+        col = int(px / self.cell_size)
+        row = int(py / self.cell_size)
+        col = min(max(col, 0), self.GRID_SIZE - 1)
+        row = min(max(row, 0), self.GRID_SIZE - 1)
         x = self.MIN_COORD + col
         y = self.MAX_COORD - row
         return x, y
@@ -63,20 +79,20 @@ class GridCanvas(tk.Canvas):
         self.delete("all")
 
         for i in range(self.GRID_SIZE + 1):
-            pos = i * self.CELL
-            self.create_line(pos, 0, pos, self.CANVAS_SIZE, fill="#cbd5e1")
-            self.create_line(0, pos, self.CANVAS_SIZE, pos, fill="#cbd5e1")
+            pos = i * self.cell_size
+            self.create_line(pos, 0, pos, self.canvas_size, fill="#cbd5e1")
+            self.create_line(0, pos, self.canvas_size, pos, fill="#cbd5e1")
 
         # Eixos: limites das células que separam -1/0 e 0/-1.
-        axis_x = (0 - self.MIN_COORD) * self.CELL
-        axis_y = (self.MAX_COORD - 0 + 1) * self.CELL
-        self.create_line(axis_x, 0, axis_x, self.CANVAS_SIZE, fill="#334155", width=2)
-        self.create_line(0, axis_y, self.CANVAS_SIZE, axis_y, fill="#334155", width=2)
+        axis_x = (0 - self.MIN_COORD) * self.cell_size
+        axis_y = (self.MAX_COORD - 0 + 1) * self.cell_size
+        self.create_line(axis_x, 0, axis_x, self.canvas_size, fill="#334155", width=2)
+        self.create_line(0, axis_y, self.canvas_size, axis_y, fill="#334155", width=2)
 
         # Rótulos esparsos.
         for value in (-10, -5, 0, 5, 10):
             x1, _, x2, _ = self.grid_to_canvas(value, self.MIN_COORD)
-            self.create_text((x1 + x2) / 2, self.CANVAS_SIZE - 8, text=str(value), fill="#475569")
+            self.create_text((x1 + x2) / 2, self.canvas_size - 8, text=str(value), fill="#475569")
             _, y1, _, y2 = self.grid_to_canvas(self.MIN_COORD, value)
             self.create_text(12, (y1 + y2) / 2, text=str(value), fill="#475569")
 
@@ -110,7 +126,8 @@ class GridCanvas(tk.Canvas):
         if not self.in_bounds(point):
             return
         x1, y1, x2, y2 = self.grid_to_canvas(x, y)
+        inset = max(1.0, min(3.0, self.cell_size * 0.08))
         self.create_rectangle(
-            x1 + 2, y1 + 2, x2 - 2, y2 - 2,
+            x1 + inset, y1 + inset, x2 - inset, y2 - inset,
             fill=color, outline=""
         )
