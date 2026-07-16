@@ -354,6 +354,7 @@ class ControlPanel(ttk.Frame):
             label = ttk.Label(self.params_frame, text=label_text)
             entry = ttk.Entry(self.params_frame, width=8, takefocus=True)
             entry.insert(0, default)
+            entry.bind("<Button-1>", lambda e: e.widget.after_idle(e.widget.focus_force))
             self.entries[key] = entry
             self.parameter_widgets[key] = (label, entry)
 
