@@ -365,12 +365,13 @@ class RasterApp(tk.Tk):
 
             elif algorithm == "Translação":
                 self._require_polygon(3)
+                original = rasterize_polyline(self.input_points, closed=True)
                 transformed = translate(
                     self.input_points,
                     self._value("tx"),
                     self._value("ty"),
                 )
-                result = rasterize_polyline(transformed, closed=True)
+                result = original | rasterize_polyline(transformed, closed=True)
 
             elif algorithm == "Escala":
                 self._require_polygon(3)
