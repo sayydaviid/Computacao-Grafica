@@ -8,8 +8,12 @@ def rasterize_polyline(points: list[Point], closed: bool = False) -> set[Point]:
     """Liga pontos consecutivos com Bresenham."""
 
     output: set[Point] = set()
-    if len(points) < 4: # Alinhamento com app.py
+    if len(points) < 2:
         return output
+
+    # Se fechado e tem pelo menos 3 pontos, adiciona o primeiro ponto ao final
+    if closed and len(points) >= 3:
+        points = points + [points[0]]
 
     pairs = list(zip(points, points[1:]))
 
