@@ -62,6 +62,9 @@ class ControlPanel(ttk.Frame):
         self._on_undo = on_undo
         self._on_clear = on_clear
         self._on_view_3d = on_view_3d
+        self.parameter_defaults = {
+            key: default for _, key, default in self.PARAMETER_DEFINITIONS
+        }
 
         self.entries: dict[str, ttk.Entry] = {}
         self.parameter_widgets: dict[str, tuple[ttk.Label, ttk.Entry]] = {}
@@ -349,7 +352,7 @@ class ControlPanel(ttk.Frame):
     def _build_parameter_widgets(self) -> None:
         for label_text, key, default in self.PARAMETER_DEFINITIONS:
             label = ttk.Label(self.params_frame, text=label_text)
-            entry = ttk.Entry(self.params_frame, width=8)
+            entry = ttk.Entry(self.params_frame, width=8, takefocus=True)
             entry.insert(0, default)
             self.entries[key] = entry
             self.parameter_widgets[key] = (label, entry)
@@ -390,6 +393,10 @@ class ControlPanel(ttk.Frame):
             entry_pad = (0, 8) if column == 0 else (0, 0)
 
             label.grid(row=row_index, column=column, sticky="w", padx=(0, 4), pady=2)
+            entry.state(["!disabled", "!readonly"])
+            entry.configure(takefocus=True)
+            entry.delete(0, tk.END)
+            entry.insert(0, self.parameter_defaults[key])
             entry.grid(row=row_index, column=column + 1, sticky="ew", padx=entry_pad, pady=2)
 
         self.after_idle(self._refresh_scroll_region)
