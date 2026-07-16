@@ -173,9 +173,14 @@ class RasterApp(tk.Tk):
             self.execute_algorithm()
 
     def _on_algorithm_changed(self) -> None:
+        algorithm = self.algorithm_var.get()
+        if algorithm not in ALGORITHMS:
+            return
+
         self.clear_all(keep_algorithm=True)
-        spec = ALGORITHMS[self.algorithm_var.get()]
+        spec = ALGORITHMS[algorithm]
         self.status_var.set(spec.instruction)
+        self.control_panel.update_for_algorithm(spec)
         self._update_action_buttons()
 
     def undo_last_point(self) -> None:
@@ -209,8 +214,6 @@ class RasterApp(tk.Tk):
         if not hasattr(self, "control_panel"):
             return
 
-        spec = ALGORITHMS[self.algorithm_var.get()]
-        self.control_panel.update_for_algorithm(spec)
         self.control_panel.set_view_3d_enabled(self._has_viewable_state())
 
     def open_3d_view(self) -> None:
@@ -362,12 +365,13 @@ class RasterApp(tk.Tk):
 
             elif algorithm == "Translação":
                 self._require_polygon(3)
+                original = rasterize_polyline(self.input_points, closed=True)
                 transformed = translate(
                     self.input_points,
                     self._value("tx"),
                     self._value("ty"),
                 )
-                result = rasterize_polyline(transformed, closed=True)
+                result = original | rasterize_polyline(transformed, closed=True)
 
             elif algorithm == "Escala":
                 self._require_polygon(3)
